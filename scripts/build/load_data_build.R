@@ -48,7 +48,7 @@ summary(load_df)  # no NAs
 # Step 2: Convert to time series with multiple seasonality
 # weekly seasonal period = 7
 # annual seasonal period = 365.25
-load_ts <- msts(load_df, 
+load_ts <- msts(load_df$daily_load, 
                 seasonal.periods = c(7, 365.25), 
                 start = c(year(start_date), month(start_date)))
 

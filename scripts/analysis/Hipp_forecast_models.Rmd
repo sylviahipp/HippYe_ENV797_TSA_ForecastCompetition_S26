@@ -1,0 +1,103 @@
+---
+title: "Forecasting Competition"
+subtitle: "Assignment 7 - Due date 03/06/26"
+author: "Sylvia Hipp"
+output: pdf_document
+geometry: margin=2.54cm
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup Environment 
+
+### Load Packages
+```{r package, message=FALSE}
+library(lubridate)
+library(ggplot2)
+library(forecast)  
+library(Kendall)
+library(tseries)
+library(outliers)
+library(tidyverse)
+library(cowplot)
+library(here)
+```
+
+### Import Data
+```{r}
+load_df <- readRDS(here("data/processed/load_df.rds"))
+load_ts <- readRDS(here("data/processed/load_ts.rds"))
+```
+
+# Analysis
+
+## Step 0: Data Exploration
+### Visualize data
+```{r warning=FALSE}
+plot_grid(autoplot(load_ts), 
+          ggAcf(load_ts, lag.max = 40),   # shows trend (slow decay)
+          ggPacf(load_ts, lag.max = 40))  # exponential decay
+
+# decomposition
+load_ts %>% mstl() %>% autoplot()
+
+```
+
+### Separate model into training and forecasting subsets
+```{r}
+# subset to last incomplete year of the data for training 
+n_forecast = 181
+load_ts_train <- subset(load_ts, 
+                        end = length(load_ts)-n_forecast)
+
+load_ts_test <- subset(load_ts, 
+                       start = length(load_ts)-n_forecast+1)
+
+```
+
+## Step 1: Fit Time Series Models
+### **Model 1**: Seasonal Naive
+
+```{r}
+# fit to just training data for comparison
+snaive_model_train <- snaive(load_ts_train, h = n_forecast)
+#summary(snaive_model_train)
+checkresiduals(snaive_model_train)   # big peak at lag = 365; residuals appear normally distributed
+
+plot(snaive_model_train)
+
+# compare to test data
+autoplot(load_ts) + 
+  autolayer(snaive_model_train$mean, series = "Seasonal Naive")
+
+```
+
+### **Model 2**: Fit ARIMA model with seasonal Fourier terms
+Can use auto.arima + xreg = fourier terms
+
+
+## Step 3: Compare model accuracy
+```{r}
+snaive_scores <- accuracy(snaive_model_train$mean, load_ts_test)
+```
+
+
+## Step 4: Export models for Forecasting Competition
+
+Read template
+```{r}
+submission_template <- read_csv(here("data/raw/submission_template.csv"))
+
+n_forecast = nrow(submission_template)
+```
+
+
+### **Model 1**: Seasonal Naive Model
+```{r}
+snaive_model <- snaive(load_ts, h = n_forecast)
+snaive_submission <- submission_template
+snaive_submission$load <- snaive_model$mean
+
+write.csv(snaive_submission, here("data/submissions/seasonal_naive_model.csv"))
+```
+
