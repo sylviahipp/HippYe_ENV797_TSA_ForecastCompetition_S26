@@ -75,10 +75,40 @@ autoplot(load_ts) +
 ### **Model 2**: Fit ARIMA model with seasonal Fourier terms
 Can use auto.arima + xreg = fourier terms
 
+```{r}
+arima_four_model_train <- auto.arima(load_ts_train, 
+                                     seasonal = FALSE, 
+                                     lambda = 0,
+                                     xreg = fourier(load_ts_train, 
+                                                    K=c(2,12))) 
+
+arima_four_forecast_train <- forecast(arima_four_model_train, 
+                                      xreg = fourier(load_ts_train, 
+                                                     K=c(2,12), 
+                                                     h=n_forecast), 
+                                      h = n_forecast)
+
+# summary(arima_four_model_train)
+checkresiduals(arima_four_model_train)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts_test) + 
+  autolayer(arima_four_forecast_train$mean, series = "ARIMA + fourier term")
+
+
+```
+
+
+
 
 ## Step 3: Compare model accuracy
 ```{r}
 snaive_scores <- accuracy(snaive_model_train$mean, load_ts_test)
+arima_four_scores <- accuracy(arima_four_forecast_train$mean, load_ts_test)
+
+# all_scores <- tibble(
+#   
+# )
 ```
 
 
@@ -98,6 +128,31 @@ snaive_model <- snaive(load_ts, h = n_forecast)
 snaive_submission <- submission_template
 snaive_submission$load <- snaive_model$mean
 
-write.csv(snaive_submission, here("data/submissions/seasonal_naive_model.csv"))
+write.csv(snaive_submission, here("data/submissions/seasonal_naive_model.csv"), 
+          row.names = FALSE)
+```
+
+### **Model 2**: Auto ARIMA with Fourier terms
+```{r}
+arima_four_model <- auto.arima(load_ts,
+                               seasonal = FALSE, 
+                               lambda = 0,
+                               xreg = fourier(load_ts, 
+                                              K=c(2,12))) 
+
+arima_four_forecast <- forecast(arima_four_model, 
+                                xreg = fourier(load_ts, 
+                                               K=c(2,12), 
+                                               h=n_forecast), 
+                                h = n_forecast)
+
+autoplot(load_ts %>% subset(start = length(load_ts)-n_forecast)) +
+  autolayer(arima_four_forecast$mean, series = "ARIMA + Fourier")
+
+arima_fourier_submission <- submission_template
+arima_fourier_submission$load <- arima_four_forecast$mean
+
+write.csv(arima_fourier_submission, here("data/submissions/arima_fourier_model.csv"), 
+          row.names = FALSE)
 ```
 
