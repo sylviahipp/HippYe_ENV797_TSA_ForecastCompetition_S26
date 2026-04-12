@@ -99,16 +99,58 @@ autoplot(load_ts_test) +
 ```
 
 
+### **Model 3**: STL + ETS
+
+```{r}
+#Fit and forecast STL + ETS model to data
+ets_model_train <-  stlf(load_ts_train,h=n_forecast)
+
+plot(ets_model_train)
+
+# compare to test data
+autoplot(load_ts_test) + 
+  autolayer(ets_model_train$mean, series = "STL+ETS")
+
+```
+
+### **Model 4**: TBATS
+
+```{r TBATS, echo=TRUE, message=FALSE, warning=FALSE}
+# TBATS can take time to fit
+tbats_fit_train <- tbats(load_ts_train)
+
+tbats_forecast_train <- forecast(tbats_fit_train, h=n_forecast)
+
+#Plot foresting results
+autoplot(tbats_forecast_train) +
+  ylab("Active Power") 
+
+#Plot model + observed data
+autoplot(load_ts_train) +
+  autolayer(tbats_forecast_train, series="TBATS",PI=FALSE)+
+  ylab("Active Power") 
+
+```
 
 
 ## Step 3: Compare model accuracy
 ```{r}
 snaive_scores <- accuracy(snaive_model_train$mean, load_ts_test)
 arima_four_scores <- accuracy(arima_four_forecast_train$mean, load_ts_test)
+ets_scores <- accuracy(ets_model_train$mean, load_ts_test)
+tbats_scores <- accuracy(tbats_forecast_train$mean, load_ts_test)
 
-# all_scores <- tibble(
-#   
-# )
+names <- colnames(snaive_scores)
+scores <- rbind(snaive_scores, 
+                arima_four_scores, 
+                ets_scores, 
+                tbats_scores) %>% as.data.frame()
+
+rownames(scores) <- c("Seasonal Naive", 
+                      "ARIMA + Fourier", 
+                      "STL + ETS", 
+                      "TBATS")
+scores
 ```
 
 
@@ -118,7 +160,7 @@ Read template
 ```{r}
 submission_template <- read_csv(here("data/raw/submission_template.csv"))
 
-n_forecast = nrow(submission_template)
+n_submission <- nrow(submission_template)
 ```
 
 
@@ -128,8 +170,8 @@ snaive_model <- snaive(load_ts, h = n_forecast)
 snaive_submission <- submission_template
 snaive_submission$load <- snaive_model$mean
 
-write.csv(snaive_submission, here("data/submissions/seasonal_naive_model.csv"), 
-          row.names = FALSE)
+# write.csv(snaive_submission, here("data/submissions/seasonal_naive_model.csv"), 
+#           row.names = FALSE)
 ```
 
 ### **Model 2**: Auto ARIMA with Fourier terms
@@ -143,16 +185,46 @@ arima_four_model <- auto.arima(load_ts,
 arima_four_forecast <- forecast(arima_four_model, 
                                 xreg = fourier(load_ts, 
                                                K=c(2,12), 
-                                               h=n_forecast), 
-                                h = n_forecast)
+                                               h=n_submission), 
+                                h = n_submission)
 
-autoplot(load_ts %>% subset(start = length(load_ts)-n_forecast)) +
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
   autolayer(arima_four_forecast$mean, series = "ARIMA + Fourier")
 
 arima_fourier_submission <- submission_template
 arima_fourier_submission$load <- arima_four_forecast$mean
 
-write.csv(arima_fourier_submission, here("data/submissions/arima_fourier_model.csv"), 
+# write.csv(arima_fourier_submission, here("data/submissions/arima_fourier_model.csv"), 
+#           row.names = FALSE)
+```
+
+
+### **Model 3**: STL + ETS
+```{r}
+#Fit and forecast STL + ETS model to data
+ets_model <-  stlf(load_ts, h=n_submission)
+ets_submission <- submission_template
+ets_submission$load <- ets_model$mean
+
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
+  autolayer(ets_model$mean, series = "STL + ETS")
+
+# write.csv(ets_submission, here("data/submissions/stl_ets_model.csv"),
+#           row.names = FALSE)
+
+```
+
+### **Model 4**: TBATS
+```{r}
+tbats_fit <- tbats(load_ts)
+
+tbats_forecast <- forecast(tbats_fit, h=n_forecast)
+
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
+  autolayer(tbats_forecast$mean, series = "TBATS")
+
+write.csv(tbats_forecast, here("data/submissions/tbats_model.csv"),
           row.names = FALSE)
+
 ```
 
