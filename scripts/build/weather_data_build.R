@@ -38,7 +38,7 @@ temperature_avg <- temperature_raw %>%
   pivot_longer(cols = contains("t_"), values_to = "temperature") %>% 
   group_by(date) %>% 
   summarize(avg_temp = mean(temperature)) %>% 
-  ungroup()
+  ungroup() 
 
 summary(temperature_avg)  # no missing values 
 

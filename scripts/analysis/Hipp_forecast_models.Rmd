@@ -30,7 +30,7 @@ load_ts <- readRDS(here("data/processed/load_ts.rds"))
 
 # weather (exogenous variables)
 relative_humidity <- readRDS(here("data/processed/avg_humidity.RDS")) 
-temperature <- readRDS(here("data/processed/avg_temperature.RDS"))
+temperature <- readRDS(here("data/processed/avg_temperature.RDS")) 
 ```
 
 Convert weather data to time series 
@@ -48,6 +48,12 @@ temp_ts <- msts(temperature$avg_temp,
 autoplot(rh_ts, series = "Relative Humidity") + 
   autolayer(temp_ts, series = "Temperature")
 
+```
+
+Get CDD / HDD Time Series
+```{r}
+cdd_ts <- pmax(temp_ts-65, 0)
+hdd_ts <- pmax(65-temp_ts, 0)
 ```
 
 
@@ -85,6 +91,14 @@ temp_ts_train <- subset(temp_ts,
 temp_ts_test <- subset(temp_ts, 
                        start = length(temp_ts)-n_forecast+1)
 
+# CDD / HDD
+cdd_ts_train <- subset(cdd_ts, end = length(cdd_ts)-n_forecast)
+cdd_ts_test <- subset(cdd_ts, start = length(cdd_ts)-n_forecast+1)
+
+hdd_ts_train <- subset(hdd_ts, end = length(hdd_ts)-n_forecast)
+hdd_ts_test <- subset(hdd_ts, start = length(hdd_ts)-n_forecast+1)
+
+
 # humidity
 rh_ts_train <- subset(rh_ts, 
                       end = length(rh_ts)-n_forecast)
@@ -97,10 +111,10 @@ rh_ts_test <- subset(rh_ts,
 ### Generate temperature forecasts for modeling (SNAIVE)
 ```{r}
 temp_forecast_snaive_train <- snaive(temp_ts_train, h = n_forecast)
+cdd_forecast_snaive_train <- snaive(cdd_ts_train, h = n_forecast)
+hdd_forecast_snaive_train <- snaive(hdd_ts_train, h = n_forecast)
 rh_forecast_snaive_train <- snaive(rh_ts_train, h = n_forecast)
 
-autoplot(rh_forecast_snaive, series = "Relative Humidity") + 
-  autolayer(temp_forecast_snaive, series = "Temperature")
 ```
 
 
@@ -184,7 +198,6 @@ autoplot(load_ts_train) +
 
 ### **Model 5**: ARIMA + Fourier + Temperature
 ```{r}
-
 xreg_temp_train <- cbind(fourier(load_ts_train, K=c(2,12)), 
                          temp = temp_ts_train)
 xreg_temp_forecast_train <- cbind(fourier(load_ts_train, K=c(2,12), h=n_forecast), 
@@ -209,6 +222,31 @@ autoplot(load_ts_test) +
 ```
 
 ### **Model 6**: ARIMA + Fourier + CDD + HDD
+```{r}
+xreg_cdd_hdd_train <- cbind(fourier(load_ts_train, K=c(2,12)), 
+                            cdd = cdd_ts_train, 
+                            hdd = hdd_ts_train)
+xreg_cdd_hdd_forecast_train <- cbind(fourier(load_ts_train, K=c(2,12), h=n_forecast),
+                                     cdd = cdd_forecast_snaive_train$mean, 
+                                     hdd = hdd_forecast_snaive_train$mean)
+
+arima_cdd_hdd_train <- auto.arima(load_ts_train, 
+                                  seasonal = FALSE, 
+                                  lambda = NULL,
+                                  xreg = xreg_cdd_hdd_train) 
+
+arima_cdd_hdd_forecast_train <- forecast(arima_cdd_hdd_train, 
+                                         xreg = xreg_cdd_hdd_forecast_train, 
+                                         h = n_forecast)
+
+# summary(arima_four_model_train)
+checkresiduals(arima_cdd_hdd_forecast_train)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts_test) + 
+  autolayer(arima_cdd_hdd_forecast_train$mean, series = "ARIMA + fourier term + CDD + HDD")
+
+```
 
 ### **Model 7**: ARIMA + Fourier + RH 
 
@@ -340,6 +378,37 @@ autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
 
 # write.csv(arima_temp_submission, here("data/submissions/arima_temperature_model.csv"),
 #           row.names = FALSE)
+
+
+```
+
+### **Model 6**: 
+```{r}
+xreg_cdd_hdd <- cbind(fourier(load_ts, K=c(2,12)),
+                      cdd = cdd_ts, 
+                      hdd = hdd_ts)
+xreg_cdd_hdd_forecast <- cbind(fourier(load_ts, K=c(2,12), h=n_submission),
+                               cdd = snaive(cdd_ts, h=n_submission)$mean, 
+                               hdd = snaive(hdd_ts, h = n_submission)$mean)
+
+arima_cdd_hdd <- auto.arima(load_ts, 
+                            seasonal = FALSE, 
+                            lambda = NULL,
+                            xreg = xreg_cdd_hdd) 
+
+arima_cdd_hdd_forecast <- forecast(arima_cdd_hdd, 
+                                   xreg = xreg_cdd_hdd_forecast, 
+                                   h = n_submission)
+
+# plot and export submission
+arima_cdd_hdd_submission <- submission_template
+arima_cdd_hdd_submission$load <- arima_cdd_hdd_forecast$mean
+
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
+  autolayer(arima_cdd_hdd_forecast$mean, series = "ARIMA + Fourier + CDD + HDD")
+
+write.csv(arima_cdd_hdd_submission, here("data/submissions/arima_cdd_hdd_model.csv"),
+          row.names = FALSE)
 
 
 ```
