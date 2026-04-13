@@ -218,12 +218,14 @@ autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
 ```{r}
 tbats_fit <- tbats(load_ts)
 
-tbats_forecast <- forecast(tbats_fit, h=n_forecast)
+tbats_forecast <- forecast(tbats_fit, h=n_submission)
+tbats_submission <- submission_template
+tbats_submission$load <- tbats_forecast$mean
 
 autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
   autolayer(tbats_forecast$mean, series = "TBATS")
 
-write.csv(tbats_forecast, here("data/submissions/tbats_model.csv"),
+write.csv(tbats_submission, here("data/submissions/tbats_model.csv"),
           row.names = FALSE)
 
 ```
