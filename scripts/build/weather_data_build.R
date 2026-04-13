@@ -22,9 +22,10 @@ temperature_raw <- read_excel(here("data/raw/temperature.xlsx"))
 # get average temp and humidity values for each hour
 
 humidity_avg <- humidity_raw %>% 
-  mutate(datetime = as.POSIXct(glue("{date} {hr}:00"))) %>% 
+  mutate(date = as.Date(date), 
+         datetime = as.POSIXct(glue("{date} {hr}:00"))) %>% 
   pivot_longer(cols = contains("rh"), values_to = "relative_humidity") %>% 
-  group_by(datetime) %>% 
+  group_by(date) %>% 
   summarize(avg_rh = mean(relative_humidity)) %>% 
   ungroup()
 
@@ -32,9 +33,10 @@ summary(humidity_avg)  # no missing values
 
 temperature_avg <- temperature_raw %>%
   filter(!is.na(date)) %>% 
-  mutate(datetime = as.POSIXct(glue("{date} {hr}:00"))) %>% 
+  mutate(date = as.Date(date), 
+         datetime = as.POSIXct(glue("{date} {hr}:00"))) %>% 
   pivot_longer(cols = contains("t_"), values_to = "temperature") %>% 
-  group_by(datetime) %>% 
+  group_by(date) %>% 
   summarize(avg_temp = mean(temperature)) %>% 
   ungroup()
 

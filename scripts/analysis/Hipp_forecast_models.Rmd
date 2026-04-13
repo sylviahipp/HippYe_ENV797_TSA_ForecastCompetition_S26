@@ -27,7 +27,29 @@ library(here)
 ```{r}
 load_df <- readRDS(here("data/processed/load_df.rds"))
 load_ts <- readRDS(here("data/processed/load_ts.rds"))
+
+# weather (exogenous variables)
+relative_humidity <- readRDS(here("data/processed/avg_humidity.RDS")) 
+temperature <- readRDS(here("data/processed/avg_temperature.RDS"))
 ```
+
+Convert weather data to time series 
+```{r}
+start_month <- month(first(load_df$date))
+start_year <- year(first(load_df$date))
+
+rh_ts <- msts(relative_humidity$avg_rh, 
+              seasonal.periods = c(7, 365.25), 
+              start = c(start_year, start_month))
+temp_ts <- msts(temperature$avg_temp, 
+                seasonal.periods = c(7, 365.25), 
+                start = c(start_year, start_month))
+
+autoplot(rh_ts, series = "Relative Humidity") + 
+  autolayer(temp_ts, series = "Temperature")
+
+```
+
 
 # Analysis
 
@@ -43,7 +65,7 @@ load_ts %>% mstl() %>% autoplot()
 
 ```
 
-### Separate model into training and forecasting subsets
+### Separate data into training and forecasting subsets
 ```{r}
 # subset to last incomplete year of the data for training 
 n_forecast = 181
@@ -54,6 +76,33 @@ load_ts_test <- subset(load_ts,
                        start = length(load_ts)-n_forecast+1)
 
 ```
+
+Also separate weather into separate training and forecasting subsets
+```{r}
+# temperature
+temp_ts_train <- subset(temp_ts, 
+                        end = length(temp_ts)-n_forecast)
+temp_ts_test <- subset(temp_ts, 
+                       start = length(temp_ts)-n_forecast+1)
+
+# humidity
+rh_ts_train <- subset(rh_ts, 
+                      end = length(rh_ts)-n_forecast)
+rh_ts_test <- subset(rh_ts, 
+                     start = length(rh_ts)-n_forecast+1)
+
+```
+
+
+### Generate temperature forecasts for modeling (SNAIVE)
+```{r}
+temp_forecast_snaive_train <- snaive(temp_ts_train, h = n_forecast)
+rh_forecast_snaive_train <- snaive(rh_ts_train, h = n_forecast)
+
+autoplot(rh_forecast_snaive, series = "Relative Humidity") + 
+  autolayer(temp_forecast_snaive, series = "Temperature")
+```
+
 
 ## Step 1: Fit Time Series Models
 ### **Model 1**: Seasonal Naive
@@ -133,23 +182,58 @@ autoplot(load_ts_train) +
 ```
 
 
+### **Model 5**: ARIMA + Fourier + Temperature
+```{r}
+
+xreg_temp_train <- cbind(fourier(load_ts_train, K=c(2,12)), 
+                         temp = temp_ts_train)
+xreg_temp_forecast_train <- cbind(fourier(load_ts_train, K=c(2,12), h=n_forecast), 
+                            temp = temp_forecast_snaive_train$mean)
+
+arima_temp_train <- auto.arima(load_ts_train, 
+                               seasonal = FALSE, 
+                               lambda = NULL,
+                               xreg = xreg_temp_train) 
+
+arima_temp_forecast_train <- forecast(arima_temp_train, 
+                                      xreg = xreg_temp_forecast_train, 
+                                      h = n_forecast)
+
+# summary(arima_four_model_train)
+checkresiduals(arima_temp_train)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts_test) + 
+  autolayer(arima_temp_forecast_train$mean, series = "ARIMA + fourier term + Temp")
+
+```
+
+### **Model 6**: ARIMA + Fourier + CDD + HDD
+
+### **Model 7**: ARIMA + Fourier + RH 
+
+### **Model 8**: ARIMA + Fourier + RH + CDD + HDD (?) 
+
 ## Step 3: Compare model accuracy
 ```{r}
 snaive_scores <- accuracy(snaive_model_train$mean, load_ts_test)
 arima_four_scores <- accuracy(arima_four_forecast_train$mean, load_ts_test)
 ets_scores <- accuracy(ets_model_train$mean, load_ts_test)
 tbats_scores <- accuracy(tbats_forecast_train$mean, load_ts_test)
+arima_temp_scores <- accuracy(arima_temp_forecast_train$mean, load_ts_test)
 
 names <- colnames(snaive_scores)
 scores <- rbind(snaive_scores, 
                 arima_four_scores, 
                 ets_scores, 
-                tbats_scores) %>% as.data.frame()
+                tbats_scores, 
+                arima_temp_scores) %>% as.data.frame()
 
 rownames(scores) <- c("Seasonal Naive", 
                       "ARIMA + Fourier", 
                       "STL + ETS", 
-                      "TBATS")
+                      "TBATS", 
+                      "ARIMA + Fourier + Temperature")
 scores
 ```
 
@@ -225,8 +309,38 @@ tbats_submission$load <- tbats_forecast$mean
 autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
   autolayer(tbats_forecast$mean, series = "TBATS")
 
-write.csv(tbats_submission, here("data/submissions/tbats_model.csv"),
-          row.names = FALSE)
+# write.csv(tbats_submission, here("data/submissions/tbats_model.csv"),
+#           row.names = FALSE)
+
+```
+
+### **Model 5**: ARIMA + Fourier + Temperature
+```{r}
+
+xreg_temp <- cbind(fourier(load_ts, K=c(2,12)),
+                   temp = temp_ts)
+xreg_temp_forecast <- cbind(fourier(load_ts, K=c(2,12), h=n_submission),
+                            temp = snaive(temp_ts, h=n_submission)$mean)
+
+arima_temp <- auto.arima(load_ts, 
+                         seasonal = FALSE, 
+                         lambda = NULL,
+                         xreg = xreg_temp) 
+
+arima_temp_forecast <- forecast(arima_temp, 
+                                xreg = xreg_temp_forecast, 
+                                h = n_submission)
+
+# plot and export submission
+arima_temp_submission <- submission_template
+arima_temp_submission$load <- arima_temp_forecast$mean
+
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
+  autolayer(arima_temp_forecast$mean, series = "ARIMA + Fourier + Temp")
+
+# write.csv(arima_temp_submission, here("data/submissions/arima_temperature_model.csv"),
+#           row.names = FALSE)
+
 
 ```
 
