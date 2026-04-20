@@ -21,6 +21,7 @@ library(outliers)
 library(tidyverse)
 library(cowplot)
 library(here)
+library(prophet)
 ```
 
 ### Import Data
@@ -111,8 +112,8 @@ rh_ts_test <- subset(rh_ts,
 ### Generate temperature forecasts for modeling (SNAIVE)
 ```{r}
 temp_forecast_snaive_train <- snaive(temp_ts_train, h = n_forecast)
-cdd_forecast_snaive_train <- snaive(cdd_ts_train, h = n_forecast)
-hdd_forecast_snaive_train <- snaive(hdd_ts_train, h = n_forecast)
+cdd_forecast_snaive_train <- pmax(temp_forecast_snaive_train$mean-65, 0)
+hdd_forecast_snaive_train <- pmax(65-temp_forecast_snaive_train$mean, 0)
 rh_forecast_snaive_train <- snaive(rh_ts_train, h = n_forecast)
 
 ```
@@ -249,8 +250,115 @@ autoplot(load_ts_test) +
 ```
 
 ### **Model 7**: ARIMA + Fourier + RH 
+```{r}
+xreg_rh_train <- cbind(fourier(load_ts_train, K=c(2,12)), 
+                       rh = rh_ts_train)
+xreg_rh_forecast_train <- cbind(fourier(load_ts_train, K=c(2,12), h=n_forecast), 
+                                rh = rh_forecast_snaive_train$mean)
 
-### **Model 8**: ARIMA + Fourier + RH + CDD + HDD (?) 
+arima_rh_train <- auto.arima(load_ts_train, 
+                             seasonal = FALSE, 
+                             lambda = NULL,
+                             xreg = xreg_rh_train) 
+
+arima_rh_forecast_train <- forecast(arima_rh_train, 
+                                    xreg = xreg_rh_forecast_train, 
+                                    h = n_forecast)
+
+# summary(arima_four_model_train)
+checkresiduals(arima_rh_train)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts_test) + 
+  autolayer(arima_rh_forecast_train$mean, series = "ARIMA + fourier term + Relative Humidity")
+
+```
+
+
+### **Model 8**: ARIMA + Fourier + RH + Temp
+
+```{r}
+xreg_rh_temp_train <- cbind(fourier(load_ts_train, K=c(2,12)), 
+                            rh = rh_ts_train, 
+                            temp = temp_ts_train)
+xreg_rh_temp_forecast_train <- cbind(fourier(load_ts_train, K=c(2,12), h=n_forecast), 
+                                     rh = rh_forecast_snaive_train$mean, 
+                                     temp = temp_forecast_snaive_train$mean)
+
+# FORCE matching column names and order
+colnames(xreg_rh_temp_forecast_train) <- colnames(xreg_rh_temp_train)
+xreg_rh_temp_forecast_train <- xreg_rh_temp_forecast_train[, colnames(xreg_rh_temp_train)]
+
+# Convert to matrix
+xreg_rh_temp_train <- as.matrix(xreg_rh_temp_train)
+xreg_rh_temp_forecast_train <- as.matrix(xreg_rh_temp_forecast_train)
+
+arima_rh_temp_train <- auto.arima(load_ts_train, 
+                                  seasonal = FALSE, 
+                                  lambda = NULL,
+                                  xreg = xreg_rh_temp_train) 
+
+arima_rh_temp_forecast_train <- forecast(arima_rh_temp_train,
+                                         xreg = xreg_rh_temp_forecast_train, 
+                                         h = n_forecast)
+
+# summary(arima_four_model_train)
+checkresiduals(arima_rh_temp_train)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts_test) + 
+  autolayer(arima_rh_temp_forecast_train$mean, series = "ARIMA + fourier term + Relative Humidity + Temperature")
+
+```
+
+### **Model 9**: Prophet baseline (just load data)
+
+```{r}
+#Prepare data
+prophet_load <- load_df %>% 
+  rename(ds=date,y=daily_load) 
+
+pro_load_train <- prophet_load[1:(nrow(prophet_load)-n_forecast),]
+
+# Fit model
+proph_fit_load <- prophet(pro_load_train)   # disables daily seasonality
+
+# Create future dataframe
+future_test <- make_future_dataframe(proph_fit_load, periods = n_forecast)
+
+# Fit model
+proph_load_forecast_test <- predict(proph_fit_load,future_test)
+
+#Plot foresting results
+ggplot() +
+  # Actual data as LINE (not points)
+  geom_line(data = prophet_load, 
+            aes(x = ds, y = y), 
+            linewidth = 0.8,
+            color="black") +
+  
+  # Forecast line
+  geom_line(data = proph_load_forecast_test, 
+            aes(x = ds, y = yhat), 
+            linewidth = 1,
+            color="blue")
+
+#convert forecast in ts object
+prophet_for_ts_train <- msts(proph_load_forecast_test$yhat,
+                             start=c(start_year, start_month), 
+                             seasonal.periods=c(7,365.25))
+                   
+prophet_for_ts_test <- tail(prophet_for_ts_train,n_forecast)
+
+#Plot model + observed data
+autoplot(load_ts_test) +
+  autolayer(prophet_for_ts_test, series="Prophet")
+```
+
+
+### **Model 10**: Prophet + additional regressors (temp and humidity)
+
+
 
 ## Step 3: Compare model accuracy
 ```{r}
@@ -382,7 +490,7 @@ autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
 
 ```
 
-### **Model 6**: 
+### **Model 6**: ARIMA + Fourier + CDD / HDD
 ```{r}
 xreg_cdd_hdd <- cbind(fourier(load_ts, K=c(2,12)),
                       cdd = cdd_ts, 
@@ -407,9 +515,129 @@ arima_cdd_hdd_submission$load <- arima_cdd_hdd_forecast$mean
 autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
   autolayer(arima_cdd_hdd_forecast$mean, series = "ARIMA + Fourier + CDD + HDD")
 
-write.csv(arima_cdd_hdd_submission, here("data/submissions/arima_cdd_hdd_model.csv"),
+# write.csv(arima_cdd_hdd_submission, here("data/submissions/arima_cdd_hdd_model.csv"),
+#           row.names = FALSE)
+```
+
+### **Model 7**: ARIMA + Fourier + Relative Humidity
+```{r}
+xreg_rh <- cbind(fourier(load_ts, K=c(2,12)), 
+                 rh = rh_ts)
+xreg_rh_forecast <- cbind(fourier(load_ts, K=c(2,12), h=n_submission), 
+                          rh = snaive(rh_ts, h=n_submission)$mean)
+
+arima_rh <- auto.arima(load_ts, 
+                       seasonal = FALSE, 
+                       lambda = NULL,
+                       xreg = xreg_rh) 
+
+arima_rh_forecast <- forecast(arima_rh, 
+                              xreg = xreg_rh_forecast, 
+                              h = n_submission)
+
+# summary(arima_four_model_train)
+checkresiduals(arima_rh)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
+  autolayer(arima_rh_forecast$mean, series = "ARIMA + Fourier + Relative Humidity")
+
+# export submission
+arima_rh_submission <- submission_template
+arima_rh_submission$load <- arima_rh_forecast$mean
+
+write.csv(arima_rh_submission, here("data/submissions/arima_rh_model.csv"),
           row.names = FALSE)
 
+```
 
+
+### **Model 8**: ARIMA + Fourier + Relative Humidity + Temperature
+```{r}
+fourier_terms <- fourier(load_ts, K = c(2, 12))
+fourier_future <- fourier(load_ts, K = c(2, 12), h = n_submission)
+
+xreg_rh_temp <- cbind(fourier_terms, 
+                      rh = rh_ts, 
+                      temp = temp_ts)
+xreg_rh_temp_forecast <- cbind(fourier_future, 
+                               rh = snaive(rh_ts, h=n_submission)$mean, 
+                               temp = snaive(temp_ts, h=n_submission)$mean)
+
+# FORCE matching column names and order
+colnames(xreg_rh_temp_forecast) <- colnames(xreg_rh_temp)
+xreg_rh_temp_forecast <- xreg_rh_temp_forecast[, colnames(xreg_rh_temp)]
+
+# Convert to matrix
+xreg_rh_temp <- as.matrix(xreg_rh_temp)
+xreg_rh_temp_forecast <- as.matrix(xreg_rh_temp_forecast)
+
+arima_rh_temp <- auto.arima(load_ts, 
+                            seasonal = FALSE, 
+                            lambda = NULL,
+                            xreg = xreg_rh_temp) 
+
+arima_rh_temp_forecast <- forecast(arima_rh_temp,
+                                   xreg = xreg_rh_temp_forecast, 
+                                   h = n_submission)
+
+# summary(arima_four_model)
+checkresiduals(arima_rh_temp)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
+  autolayer(arima_rh_temp_forecast$mean, series = "ARIMA + Fourier + Relative Humidity + Temp")
+
+# export submission
+arima_rh_temp_submission <- submission_template
+arima_rh_temp_submission$load <- arima_rh_temp_forecast$mean
+
+# write.csv(arima_rh_temp_submission, here("data/submissions/arima_rh_temp_model.csv"),
+#           row.names = FALSE)
+```
+
+
+### **Model 9:** Prophet Baseline
+```{r}
+# Fit model
+proph_fit_load <- prophet(prophet_load)   # disables daily seasonality
+
+# Create future dataframe
+future <- make_future_dataframe(proph_fit_load, periods = n_submission)
+
+# Fit model
+proph_load_forecast <- predict(proph_fit_load,future)
+
+#Plot foresting results
+ggplot() +
+  # Actual data as LINE (not points)
+  geom_line(data = prophet_load, 
+            aes(x = ds, y = y), 
+            linewidth = 0.8,
+            color="black") +
+  
+  # Forecast line
+  geom_line(data = proph_load_forecast, 
+            aes(x = ds, y = yhat), 
+            linewidth = 1,
+            color="blue")
+
+#convert forecast in ts object
+prophet_for_ts <- msts(proph_load_forecast$yhat,
+                       start=c(start_year, start_month), 
+                       seasonal.periods=c(7,365.25))
+                   
+prophet_for_ts <- tail(prophet_for_ts,n_submission)
+
+#Plot model + observed data
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) + 
+  autolayer(prophet_for_ts, series="Prophet")
+
+# export submission
+prophet_submission <- submission_template
+prophet_submission$load <- prophet_for_ts
+
+write.csv(prophet_submission, here("data/submissions/prophet_baseline.csv"),
+          row.names = FALSE)
 ```
 
