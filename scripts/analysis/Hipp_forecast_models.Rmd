@@ -357,7 +357,62 @@ autoplot(load_ts_test) +
 
 
 ### **Model 10**: Prophet + additional regressors (temp and humidity)
+```{r}
+prophet_load_weather <- prophet_load %>% 
+  bind_cols(temp = temperature$avg_temp, 
+            humidity = relative_humidity$avg_rh)
 
+prophet_load_weather_train <- prophet_load_weather[1:(nrow(prophet_load)-n_forecast),]
+
+# fit model -- used ChatGPT to learn how to add extra regressors
+m <- prophet() %>% 
+  add_regressor("temp", standardize = TRUE) %>% 
+  add_regressor("humidity", standardize = TRUE)
+
+m_weather_load_train <- fit.prophet(m, prophet_load_weather_train)
+
+# Create future dataframe
+future_test_weather <- make_future_dataframe(m_weather_load_train,
+                                             periods = n_forecast)
+future_test_weather$temp <- c(prophet_load_weather_train$temp, temp_forecast_snaive_train$mean)
+future_test_weather$humidity <- c(prophet_load_weather_train$humidity, rh_forecast_snaive_train$mean)
+
+# Predict 
+proph_load_weather_forecast_test <- predict(m_weather_load_train,future_test_weather)
+
+#convert forecast in ts object
+prophet_for_load_weather_ts_train <- msts(proph_load_weather_forecast_test$yhat,
+                                          start=c(start_year, start_month), 
+                                          seasonal.periods=c(7,365.25))
+                   
+prophet_for_load_weather_ts_test <- tail(prophet_for_load_weather_ts_train,n_forecast)
+
+#Plot model + observed data
+autoplot(load_ts_test) +
+  autolayer(prophet_for_load_weather_ts_test, series="Prophet")
+```
+
+### **Model 11**: Neural Network (NNETAR) + Fourier Terms
+```{r}
+#You can play with the different values for p and P, you can also use xreg with Fourier term to model the multiple seasonality
+
+#NN_fit <- nnetar(ts_act_power_daily_train,p=1,P=1)
+nn_fit_load_train <- nnetar(load_ts_train,
+                            p=1,
+                            P=0,
+                            xreg=fourier(load_ts_train, K=c(2,12)))
+
+#NN_for <- forecast(NN_fit, h=365) 
+nn_for_load_test <- forecast(nn_fit_load_train,  
+                             h=n_forecast,
+                             xreg=fourier(load_ts_train, 
+                                          K=c(2,12),h=n_forecast))
+
+#Plot model + observed data
+autoplot(load_ts_test) +
+  autolayer(nn_for_load_test, series="Neural Network",PI=FALSE)
+
+```
 
 
 ## Step 3: Compare model accuracy
@@ -637,7 +692,78 @@ autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
 prophet_submission <- submission_template
 prophet_submission$load <- prophet_for_ts
 
-write.csv(prophet_submission, here("data/submissions/prophet_baseline.csv"),
-          row.names = FALSE)
+# write.csv(prophet_submission, here("data/submissions/prophet_baseline.csv"),
+#           row.names = FALSE)
 ```
 
+### **Model 10**: Prophet + temp / humidity regressors
+```{r}
+temp_forecast <- snaive(temp_ts, h=n_submission)$mean
+rh_forecast <- snaive(rh_ts, h=n_submission)$mean
+
+# fit model -- used ChatGPT to learn how to add extra regressors
+m <- prophet() %>% 
+  add_regressor("temp", standardize = TRUE) %>% 
+  add_regressor("humidity", standardize = TRUE)
+
+m_weather_load <- fit.prophet(m, prophet_load_weather)
+
+# Create future dataframe
+future_weather_load <- make_future_dataframe(m_weather_load,
+                                             periods = n_submission)
+future_weather_load$temp <- c(prophet_load_weather$temp, temp_forecast)
+future_weather_load$humidity <- c(prophet_load_weather$humidity, rh_forecast)
+
+# Predict 
+proph_weather_load_forecast <- predict(m_weather_load,future_weather_load)
+
+#convert forecast in ts object
+prophet_for_weather_load_ts <- msts(proph_weather_load_forecast$yhat,
+                                    start=c(start_year, start_month), 
+                                    seasonal.periods=c(7,365.25))
+                   
+prophet_for_weather_load_ts <- tail(prophet_for_weather_load_ts,n_submission)
+
+#Plot model + observed data
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) + 
+  autolayer(prophet_for_ts, series = "Prophet Baseline") + 
+  autolayer(prophet_for_weather_load_ts, series="Prophet + Temp + Humidity Regressors")
+
+# export submission
+prophet_weather_submission <- submission_template
+prophet_weather_submission$load <- prophet_for_weather_load_ts
+
+# write.csv(prophet_weather_submission, here("data/submissions/prophet_weather_regressors.csv"),
+#           row.names = FALSE)
+
+```
+
+### **Model 11**: Neural Network (NNETAR) + Fourier Terms
+```{r}
+#You can play with the different values for p and P, you can also use xreg with Fourier term to model the multiple seasonality
+
+#NN_fit <- nnetar(ts_act_power_daily_train,p=1,P=1)
+nn_fit_load <- nnetar(load_ts,
+                      p=1,
+                      P=0,
+                      xreg=fourier(load_ts, K=c(2,12)))
+
+#NN_for <- forecast(NN_fit, h=365) 
+nn_for_load <- forecast(nn_fit_load,  
+                        h=n_submission,
+                        xreg=fourier(load_ts_train, 
+                                     K=c(2,12),h=n_submission))
+
+#Plot model + observed data
+autoplot(load_ts %>% subset(start = length(load_ts)-2*n_submission)) + 
+  autolayer(nn_for_load, series = "NNETAR")
+
+# export submission
+nnetar_submission <- submission_template
+nnetar_submission$load <- nn_for_load$mean
+
+write.csv(nnetar_submission, here("data/submissions/nnetar.csv"),
+          row.names = FALSE)
+
+
+```
