@@ -1,6 +1,5 @@
 ---
 title: "Forecasting Competition"
-subtitle: "Assignment 7 - Due date 03/06/26"
 author: "Sylvia Hipp"
 output: pdf_document
 geometry: margin=2.54cm
@@ -109,13 +108,20 @@ rh_ts_test <- subset(rh_ts,
 ```
 
 
-### Generate temperature forecasts for modeling (SNAIVE)
+### Generate temperature forecasts for modeling (SNAIVE and tbats)
 ```{r}
 temp_forecast_snaive_train <- snaive(temp_ts_train, h = n_forecast)
 cdd_forecast_snaive_train <- pmax(temp_forecast_snaive_train$mean-65, 0)
 hdd_forecast_snaive_train <- pmax(65-temp_forecast_snaive_train$mean, 0)
 rh_forecast_snaive_train <- snaive(rh_ts_train, h = n_forecast)
 
+
+# tbats
+# TBATS can take time to fit
+temp_forecast_tbats_train <- tbats(temp_ts_train) %>% 
+  forecast(h=n_forecast)
+rh_forecast_tbats_train <- tbats(rh_ts_train) %>% 
+  forecast(h=n_forecast)
 ```
 
 
@@ -413,6 +419,70 @@ autoplot(load_ts_test) +
   autolayer(nn_for_load_test, series="Neural Network",PI=FALSE)
 
 ```
+
+### **Model 12**: Neural Network + weather as exogenous vars
+```{r}
+xreg_rh_temp_train <- cbind(fourier(load_ts_train, K=c(2,12)), 
+                            rh = rh_ts_train, 
+                            temp = temp_ts_train)
+xreg_rh_temp_forecast_train <- cbind(fourier(load_ts_train, K=c(2,12), h=n_forecast), 
+                                     rh = rh_forecast_snaive_train$mean, 
+                                     temp = temp_forecast_snaive_train$mean)
+
+nn_fit_load_train <- nnetar(load_ts_train,
+                            p=1,
+                            P=0,
+                            xreg=xreg_rh_temp_train)
+
+#NN_for <- forecast(NN_fit, h=365) 
+nn_for_load_test <- forecast(nn_fit_load_train,  
+                             h=n_forecast,
+                             xreg=xreg_rh_temp_forecast_train)
+
+#Plot model + observed data
+autoplot(load_ts_test) +
+  autolayer(nn_for_load_test, series="Neural Network + Fourier + temp + RH",PI=FALSE)
+
+```
+
+
+### **Model 13**: ARIMA + Fourier + weather (tbats forecast)
+```{r}
+xreg_rh_temp_train <- cbind(fourier(load_ts_train, K=c(2,12)), 
+                            rh = rh_ts_train, 
+                            temp = temp_ts_train)
+xreg_rh_temp_forecast_train <- cbind(fourier(load_ts_train, K=c(2,12), h=n_forecast), 
+                                     rh = rh_forecast_tbats_train$mean, 
+                                     temp = temp_forecast_tbats_train$mean)
+
+# FORCE matching column names and order
+colnames(xreg_rh_temp_forecast_train) <- colnames(xreg_rh_temp_train)
+xreg_rh_temp_forecast_train <- xreg_rh_temp_forecast_train[, colnames(xreg_rh_temp_train)]
+
+# Convert to matrix
+xreg_rh_temp_train <- as.matrix(xreg_rh_temp_train)
+xreg_rh_temp_forecast_train <- as.matrix(xreg_rh_temp_forecast_train)
+
+arima_rh_temp_train <- auto.arima(load_ts_train, 
+                                  seasonal = FALSE, 
+                                  lambda = NULL,
+                                  xreg = xreg_rh_temp_train) 
+
+arima_rh_temp_forecast_train <- forecast(arima_rh_temp_train,
+                                         xreg = xreg_rh_temp_forecast_train, 
+                                         h = n_forecast)
+
+# summary(arima_four_model_train)
+checkresiduals(arima_rh_temp_train)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts_test) + 
+  autolayer(arima_rh_temp_forecast_train$mean, series = "ARIMA + fourier term + Relative Humidity + Temperature (tbats)")
+
+```
+
+
+### **Model 14**: Prophet + weather regressors (tbats forecast)
 
 
 ## Step 3: Compare model accuracy
@@ -762,8 +832,88 @@ autoplot(load_ts %>% subset(start = length(load_ts)-2*n_submission)) +
 nnetar_submission <- submission_template
 nnetar_submission$load <- nn_for_load$mean
 
-write.csv(nnetar_submission, here("data/submissions/nnetar.csv"),
+# write.csv(nnetar_submission, here("data/submissions/nnetar.csv"),
+#           row.names = FALSE)
+```
+
+### **Model 12**: Neural Network + weather as exogenous vars
+```{r}
+xreg_rh_temp <- cbind(fourier(load_ts, K = c(2, 12)), 
+                      rh = rh_ts, 
+                      temp = temp_ts)
+xreg_rh_temp_forecast <- cbind(fourier(load_ts, K = c(2, 12), h = n_submission), 
+                               rh = snaive(rh_ts, h=n_submission)$mean, 
+                               temp = snaive(temp_ts, h=n_submission)$mean)
+
+# FORCE matching column names and order
+colnames(xreg_rh_temp_forecast) <- colnames(xreg_rh_temp)
+xreg_rh_temp_forecast <- xreg_rh_temp_forecast[, colnames(xreg_rh_temp)]
+
+# Convert to matrix
+xreg_rh_temp <- as.matrix(xreg_rh_temp)
+xreg_rh_temp_forecast <- as.matrix(xreg_rh_temp_forecast)
+
+nn_fit_load_temp_rh <- nnetar(load_ts,
+                              p=1,
+                              P=0,
+                              xreg=xreg_rh_temp)
+
+#NN_for <- forecast(NN_fit, h=365) 
+nn_for_load_temp_rh <- forecast(nn_fit_load_temp_rh,  
+                                h=n_submission,
+                                xreg=xreg_rh_temp_forecast)
+
+#Plot model + observed data
+autoplot(load_ts %>% subset(start = length(load_ts)-2*n_submission)) + 
+  autolayer(nn_for_load_temp_rh, series = "NNETAR + Temp + RH")
+
+# export submission
+nnetar_weather_submission <- submission_template
+nnetar_weather_submission$load <- nn_for_load_temp_rh$mean
+
+write.csv(nnetar_weather_submission, here("data/submissions/nnetar_weather_model.csv"),
           row.names = FALSE)
 
 
 ```
+
+### **Model 13**: ARIMA + Fourier + weather (tbats forecast)
+```{r}
+fourier_terms <- fourier(load_ts, K = c(2, 12))
+fourier_future <- fourier(load_ts, K = c(2, 12), h = n_submission)
+
+temp_forecast <- tbats(temp_ts) %>% forecast(h=n_submission)
+rh_forecast <- tbats(rh_ts) %>% forecast(h=n_submission)
+
+xreg_rh_temp <- cbind(fourier_terms, 
+                      rh = rh_ts, 
+                      temp = temp_ts)
+xreg_rh_temp_forecast <- cbind(fourier_future, 
+                               rh = rh_forecast$mean, 
+                               temp = temp_forecast$mean)
+
+arima_rh_temp <- auto.arima(load_ts, 
+                            seasonal = FALSE, 
+                            lambda = NULL,
+                            xreg = xreg_rh_temp) 
+
+arima_rh_temp_forecast <- forecast(arima_rh_temp,
+                                   xreg = xreg_rh_temp_forecast, 
+                                   h = n_submission)
+
+# summary(arima_four_model)
+checkresiduals(arima_rh_temp)   # appears near white noise series
+
+# compare to test data
+autoplot(load_ts %>% subset(start = length(load_ts)-n_submission)) +
+  autolayer(arima_rh_temp_forecast$mean, series = "ARIMA + Fourier + Relative Humidity + Temp (Tbats)")
+
+# export submission
+arima_rh_temp_tbats_submission <- submission_template
+arima_rh_temp_tbats_submission$load <- arima_rh_temp_forecast$mean
+
+# write.csv(arima_rh_temp_tbats_submission, here("data/submissions/arima_rh_temp_tbats_model.csv"),
+#           row.names = FALSE)
+
+```
+
