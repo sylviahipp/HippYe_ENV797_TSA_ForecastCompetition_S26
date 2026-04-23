@@ -1,0 +1,296 @@
+---
+title: "Forecasting Competition"
+author: "Janice Ye"
+output: pdf_document
+geometry: margin=2.54cm
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup Environment 
+### Load Packages
+```{r package, message=FALSE}
+library(lubridate)
+library(ggplot2)
+library(forecast)  
+library(Kendall)
+library(tseries)
+library(outliers)
+library(tidyverse)
+library(cowplot)
+library(here)
+library(prophet)
+```
+
+### Import Data
+```{r}
+load_df <- readRDS(here("data/processed/load_df.rds"))
+rh_df <- readRDS(here("data/processed/avg_humidity.RDS")) 
+temp_df <- readRDS(here("data/processed/avg_temperature.RDS")) 
+```
+
+### merge 3 data into 1
+```{r}
+comb <- load_df %>%
+  left_join(temp_df, by = "date") %>%
+  left_join(rh_df, by = "date")
+```
+
+### split data
+```{r}
+train <- comb %>%
+  filter(date >= as.Date("2005-01-01"),
+         date <= as.Date("2010-06-30"))
+
+test <- comb %>%
+  filter(date >= as.Date("2010-07-01"),
+         date <= as.Date("2010-07-31"))
+
+full <- comb %>%
+  filter(date >= as.Date("2005-01-01"),
+         date <= as.Date("2011-06-30"))
+```
+
+### Convert to time series for load data only
+```{r}
+train_ts <- msts(train$daily_load, 
+              seasonal.periods = c(7, 365.25))
+
+test_ts <- msts(test$daily_load, 
+              seasonal.periods = c(7, 365.25))
+
+full_ts <- msts(full$daily_load, 
+              seasonal.periods = c(7, 365.25))
+```
+
+
+## data analysis
+### model 1: arima + fourier
+```{r}
+# find the most applicable K
+best_dhr <- list(
+  rmse = Inf,
+  K_week = NA,
+  K_year = NA,
+  fit = NULL,
+  fc = NULL
+)
+
+# testing
+for (K_week in 1:2) {
+  for (K_year in 3:6) {
+    xreg_train <- fourier(train_ts, K = c(K_week, K_year))
+    xreg_test <- fourier(train_ts, K = c(K_week, K_year), h = 31)
+
+    fit_try <- auto.arima(
+      train_ts,
+      xreg = xreg_train,
+      seasonal = FALSE,          
+      stepwise = TRUE,
+      approximation = TRUE,
+      lambda = "auto",
+      biasadj = TRUE
+    )
+
+    fc_try <- forecast(fit_try, xreg = xreg_test, h = 31)
+
+    rmse_try <- accuracy(as.numeric(fc_try$mean), as.numeric(test$daily_load))["Test set", "RMSE"]
+
+    if (rmse_try < best_dhr$rmse) {
+      best_dhr$rmse <- rmse_try
+      best_dhr$K_week <- K_week
+      best_dhr$K_year <- K_year
+      best_dhr$fit <- fit_try
+      best_dhr$fc <- fc_try
+    }
+  }
+}
+
+# check best dhr
+best_dhr$K_week
+best_dhr$K_year
+best_dhr$rmse
+accuracy(as.numeric(best_dhr$fc$mean), as.numeric(test_ts))
+
+K <- c(best_dhr$K_week, best_dhr$K_year)
+```
+
+## model 2: arima fourier + regressor 
+```{r}
+# scale weather variables using TRAIN stats only
+weather_train <- scale(train %>% select(avg_temp, avg_rh))
+
+weather_test <- scale(
+  test %>% select(avg_temp, avg_rh),
+  center = attr(weather_train, "scaled:center"),
+  scale  = attr(weather_train, "scaled:scale")
+)
+
+best_ext <- list(
+  rmse = Inf,
+  K_week = NA,
+  K_year = NA,
+  fit = NULL,
+  fc = NULL
+)
+
+for (K_week in 1:2) {
+  for (K_year in 4:5) {
+    
+    cat("Running K =", K_week, K_year, "\n")
+    
+    fourier_train <- fourier(train_ts, K = c(K_week, K_year))
+    fourier_test  <- fourier(train_ts, K = c(K_week, K_year), h = nrow(test))
+    
+    xreg_train <- cbind(fourier_train, weather_train)
+    xreg_test  <- cbind(fourier_test, weather_test)
+    
+    fit_try <- auto.arima(
+      train_ts,
+      xreg = xreg_train,
+      seasonal = FALSE,
+      stepwise = TRUE,
+      approximation = TRUE,
+      lambda = "auto",
+      biasadj = TRUE
+    )
+    
+    fc_try <- forecast(
+      fit_try,
+      xreg = xreg_test,
+      h = nrow(test)
+    )
+    
+    rmse_try <- accuracy(
+      as.numeric(fc_try$mean),
+      as.numeric(test_ts)
+    )["Test set", "RMSE"]
+    
+    cat("RMSE =", rmse_try, "\n")
+    
+    if (rmse_try < best_ext$rmse) {
+      best_ext$rmse <- rmse_try
+      best_ext$K_week <- K_week
+      best_ext$K_year <- K_year
+      best_ext$fit <- fit_try
+      best_ext$fc <- fc_try
+    }
+  }
+}
+
+best_ext$K_week
+best_ext$K_year
+best_ext$rmse
+accuracy(as.numeric(best_ext$fc$mean), as.numeric(test_ts))
+```
+
+## model 3: tbats
+```{r}
+#tbats
+tbats_fit_train <- tbats(train_ts)
+
+tbats_forecast_train <- forecast(tbats_fit_train, h = nrow(test))
+
+accuracy(as.numeric(tbats_forecast_train$mean), as.numeric(test_ts))
+```
+
+# model 4: prophet
+```{r}
+prophet_train <- train %>%
+  transmute(
+    ds = as.Date(date),
+    y = as.numeric(daily_load)
+  )
+
+prophet_test <- test %>%
+  transmute(
+    ds = as.Date(date),
+    y = as.numeric(daily_load)
+  )
+
+prophet_model_train <- prophet(
+  prophet_train,
+  yearly.seasonality = TRUE,
+  weekly.seasonality = TRUE,
+  daily.seasonality = FALSE
+)
+
+future_test <- prophet_test %>%
+  select(ds)
+
+prophet_forecast_train <- predict(prophet_model_train, future_test)
+
+accuracy(
+  as.numeric(prophet_forecast_train$yhat),
+  as.numeric(prophet_test$y)
+)
+```
+
+# model 5: tbats + prophet
+```{r}
+weights <- seq(0, 1, by = 0.1)
+
+ens_results <- data.frame()
+
+for (w in weights) {
+  ens <- w * as.numeric(tbats_forecast_train$mean) +
+         (1 - w) * as.numeric(prophet_forecast_train$yhat)
+  
+  acc <- accuracy(ens, as.numeric(test_ts))
+  
+  ens_results <- rbind(
+    ens_results,
+    data.frame(
+      w_tbats = w,
+      w_prophet = 1 - w,
+      RMSE = acc["Test set", "RMSE"],
+      MAE = acc["Test set", "MAE"],
+      MAPE = acc["Test set", "MAPE"]
+    )
+  )
+}
+
+ens_results[order(ens_results$RMSE), ]
+```
+
+# Fit model
+```{r}
+final_xreg_train <- fourier(
+    full_ts,
+    K = c(best_dhr$K_week, best_dhr$K_year)
+  )
+
+  final_xreg_future <- fourier(
+    full_ts,
+    K = c(best_dhr$K_week, best_dhr$K_year),
+    h = 31
+  )
+
+final_fit <- auto.arima(
+    full_ts,
+    xreg = final_xreg_train,
+    seasonal = FALSE,
+    stepwise = FALSE,
+    approximation = FALSE,
+    lambda = "auto",
+    biasadj = TRUE
+  )
+
+final_fc <- forecast(final_fit, xreg = final_xreg_future, h = 31)
+```
+
+# Export
+```{r}
+submission_template <- read_csv(here("data/raw/submission_template.csv"))
+n_submission <- nrow(submission_template)
+
+arima_four_submit <- submission_template
+arima_four_submit$load <- as.numeric(final_fc$mean)
+
+write.csv(
+  arima_four_submit,
+  "./data/submissions/arima_fourier_model.csv",
+  row.names = FALSE
+)
+```
+
