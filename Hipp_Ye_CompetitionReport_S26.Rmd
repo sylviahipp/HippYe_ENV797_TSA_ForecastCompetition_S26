@@ -1,0 +1,303 @@
+---
+title: "ENV 797 Forecasting Competition Report"
+subtitle: "Github Link: https://github.com/sylviahipp/HippYe_ENV797_TSA_ForecastCompetition_S26"
+author: "Sylvia Hipp and Janice Ye"
+date: "April 24, 2026"
+output: pdf_document
+geometry: margin=2.54cm
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup Environment 
+
+### Load Packages
+```{r package, message=FALSE, include=FALSE}
+library(lubridate)
+library(ggplot2)
+library(forecast)  
+library(Kendall)
+library(tseries)
+library(outliers)
+library(tidyverse)
+library(cowplot)
+library(here)
+library(prophet)
+library(readxl)
+library(glue)
+library(knitr)
+library(kableExtra)
+```
+
+# Import and Wrangle Data 
+
+## Load Data
+```{r Process Load Data, message=FALSE, warning=FALSE}
+load_df_raw <- read_excel(here("data/raw/load.xlsx"))
+
+# Processing steps: 
+# pivot longer to hourly data
+# group by date and take average load over 24-hours
+
+load_df <- load_df_raw %>%
+  mutate(date = as.Date(date)) %>% 
+  pivot_longer(cols = c(h1:h24), 
+               names_to = "hour", values_to = "load") %>% 
+  group_by(date) %>% 
+  # daily load = average across all 24 hours
+  summarize(daily_load = mean(load, na.rm = TRUE)) %>%    # exclude NAs when calculating load
+  ungroup()
+
+```
+
+## Weather Data
+
+```{r Process Weather Data, message=FALSE, warning=FALSE}
+# Import raw data
+humidity_raw <- read_excel(here("data/raw/relative_humidity.xlsx"))
+temperature_raw <- read_excel(here("data/raw/temperature.xlsx"))
+
+# Clean data --------------------------------------------------------------
+
+# get average temp and humidity values for each hour
+
+rh_df <- humidity_raw %>% 
+  mutate(date = as.Date(date), 
+         datetime = as.POSIXct(glue("{date} {hr}:00"))) %>% 
+  pivot_longer(cols = contains("rh"), values_to = "relative_humidity") %>% 
+  group_by(date) %>% 
+  summarize(avg_rh = mean(relative_humidity)) %>% 
+  ungroup()
+
+#summary(humidity_avg)  # no missing values
+
+temp_df <- temperature_raw %>%
+  filter(!is.na(date)) %>% 
+  mutate(date = as.Date(date), 
+         datetime = as.POSIXct(glue("{date} {hr}:00"))) %>% 
+  pivot_longer(cols = contains("t_"), values_to = "temperature") %>% 
+  group_by(date) %>% 
+  summarize(avg_temp = mean(temperature)) %>% 
+  ungroup() 
+
+#summary(temperature_avg)  # no missing values 
+```
+
+## Combine Datasets and convert to time series 
+### Combine
+```{r Convert Load to TS, message=FALSE, warning=FALSE}
+# Combine datasets
+comb <- load_df %>%
+  left_join(temp_df, by = "date") %>%
+  left_join(rh_df, by = "date")
+
+# Make sure there are no missing dates
+start_date <- first(comb$date)
+end_date <- last(comb$date)
+
+dates_seq <- seq.Date(start_date, end_date, by = "day") %>% tibble() %>% rename("date" = '.')
+
+comb <- dates_seq %>% 
+  left_join(comb)
+
+#summary(comb)  # no NAs
+```
+
+### Split into test and training period 
+```{r Separate Train / Test, message=FALSE, warning=FALSE}
+start_test <- as.Date("2011-06-01")
+start_test_doy <- as.numeric(format(start_test, "%j"))
+end_test <- as.Date("2011-06-30")
+
+
+train <- comb %>%
+  filter(date >= start_date,
+         date < start_test)
+
+test <- comb %>%
+  filter(date >= start_test,
+         date <= end_test)
+
+full <- comb %>%
+  filter(date >= start_date,
+         date <= end_date)
+```
+
+### Convert to time series
+#### Load 
+```{r Convert load to ts, message=FALSE, warning=FALSE}
+train_ts <- msts(train$daily_load, 
+                 seasonal.periods = c(7, 365.25), 
+                 start = c(year(start_date), 1))
+
+test_ts <- msts(test$daily_load, 
+                seasonal.periods = c(7, 365.25), 
+                start = c(year(start_test), start_test_doy))
+
+full_ts <- msts(full$daily_load, 
+                seasonal.periods = c(7, 365.25), 
+                start = c(year(start_date), 1))
+```
+
+#### Weather
+```{r}
+temp_ts_train <- msts(train$avg_temp, 
+                      seasonal.periods = c(7, 365.25), 
+                      start = c(year(start_date), 1))
+  
+temp_ts_full <- msts(full$avg_temp,
+                     seasonal.periods = c(7, 365.25), 
+                     start = c(year(start_date), 1))
+
+rh_ts_train <- msts(train$avg_rh, 
+                      seasonal.periods = c(7, 365.25), 
+                      start = c(year(start_date), 1))
+  
+rh_ts_full <- msts(full$avg_rh,
+                     seasonal.periods = c(7, 365.25), 
+                     start = c(year(start_date), 1))
+```
+
+
+
+# Fit Time Series Models
+
+```{r message=FALSE, warning=FALSE}
+# designate length of forecast
+n_forecast = length(test_ts)
+```
+
+Get Seasonal Naive for Weather Data for forecasting
+```{r}
+temp_snaive_test <- snaive(temp_ts_train, h = n_forecast)
+rh_snaive_test <- snaive(rh_ts_train, h = n_forecast)
+```
+
+## **Model 1**: [[Janice]]
+
+
+## **Model 2**: Prophet Baseline (Score = 0.0973)
+```{r Prophet, echo=TRUE, message=FALSE, warning=FALSE}
+# Prepare data
+proph_load_train <- train %>% 
+  select(date, daily_load) %>% 
+  rename(ds=date,y=daily_load) 
+
+# Fit model
+proph_fit_load <- prophet(proph_load_train) 
+
+# Create future data frame
+proph_future <- make_future_dataframe(proph_fit_load, periods = n_forecast)
+
+# Fit model
+proph_load_forecast <- predict(proph_fit_load,proph_future)
+
+# convert forecast in ts object
+prophet_for_ts <- msts(proph_load_forecast$yhat,
+                       start=c(year(start_date), 1), 
+                       seasonal.periods=c(7,365.25))
+                   
+prophet_for_ts_test <- tail(prophet_for_ts,n_forecast)
+
+# Plot model + observed data
+autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
+  autolayer(test_ts, series = "Testing Data") + 
+  autolayer(prophet_for_ts_test, series="Prophet (Baseline)",PI=FALSE) +
+  ylab("Daily Load")
+```
+
+
+## **Model 3**: TBATS (Score = 0.0998)
+
+```{r TBATS, echo=TRUE, message=FALSE, warning=FALSE}
+# Fit TBATA model
+tbats_fit_train <- tbats(train_ts)
+
+tbats_forecast_train <- forecast(tbats_fit_train, h=n_forecast)
+
+# Plot model + observed data
+autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
+  autolayer(test_ts, series = "Testing Data") + 
+  autolayer(tbats_forecast_train, series="TBATS",PI=FALSE) +
+  ylab("Daily Load")
+
+```
+
+
+## **Model 4**: [[Janice]]
+
+
+## **Model 5**: Prophet + Weather Regressors (Score = 0.1056)
+
+```{r}
+prophet_load_weather_train <- train %>% 
+  rename(ds = date, y = daily_load, temp = avg_temp, rh = avg_rh) 
+
+# create model -- used ChatGPT to learn how to add extra regressors
+prophet_m_regressors <- prophet() %>% 
+  add_regressor("temp", standardize = TRUE) %>% 
+  add_regressor("rh", standardize = TRUE)
+
+# fit model to training data
+prophet_fit_regressors <- fit.prophet(prophet_m_regressors, 
+                                      prophet_load_weather_train)
+
+# Create future data frame
+proph_future_regressors <- make_future_dataframe(prophet_fit_regressors,
+                                                periods = n_forecast)
+
+# add regressors to future data frame
+proph_future_regressors$temp <- c(temp_ts_train, temp_snaive_test$mean)
+proph_future_regressors$rh <- c(rh_ts_train, rh_snaive_test$mean)
+
+# Predict 
+proph_load_weather_forecast <- predict(prophet_fit_regressors,proph_future_regressors)
+
+# convert forecast in ts object
+prophet_for_weather_ts <- msts(proph_load_weather_forecast$yhat,
+                               start=c(year(start_date), 1), 
+                               seasonal.periods=c(7,365.25))
+                   
+prophet_for_weather_ts_test <- tail(prophet_for_weather_ts,n_forecast)
+
+# Plot model + observed data
+autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
+  autolayer(test_ts, series = "Testing Data") + 
+  autolayer(prophet_for_weather_ts_test, series="Prophet (Weather Regressors)") +
+  ylab("Daily Load")
+
+```
+
+
+# Compare Model Performance
+
+We trained our model on data over the period January 1, 2005--May 31, 2011. The model was then tested on its performance to predict load in June 2011. For our submissions for the competition, we trained the models on the entire dataset then projected load for the month of July 2011. 
+
+```{r}
+# Get all accuracy scores
+tbats_scores <- accuracy(tbats_forecast_train$mean, test_ts)
+prophet_scores <- accuracy(prophet_for_ts_test, test_ts)
+prophet_weather_scores <- accuracy(prophet_for_weather_ts_test, test_ts)
+```
+
+```{r}
+# Combine scores in table 
+names <- colnames(tbats_scores)
+
+scores <- rbind(
+  prophet_scores,
+  prophet_weather_scores,
+  tbats_scores
+) %>% as.data.frame()
+
+rownames(scores) <- c("Prophet (baseline)", "Prophet (+Weather Regressors)", "TBATS")
+
+# Display table with scores
+scores %>% 
+  kable() %>% 
+  row_spec(0, align = "c", bold = TRUE) %>% 
+  column_spec(1, bold = TRUE) %>% 
+  kable_classic() 
+
+```
+
