@@ -175,7 +175,7 @@ rh_snaive_test <- snaive(rh_ts_train, h = n_forecast)
 ```
 
 ## **Model 1**: ARIMA + Fourier (Score = 0.096)
-```{r}
+```{r Arima + Fourier, message=FALSE, warning=FALSE}
 # find the most applicable K
 best_dhr <- list(
   rmse = Inf,
@@ -226,10 +226,9 @@ K <- c(best_dhr$K_week, best_dhr$K_year)
 # plot
 autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
   autolayer(test_ts, series = "Testing Data") + 
-  autolayer(as.numeric(best_dhr$fc$mean), series = "ARIMA+Fourier",PI = FALSE) +
+  autolayer(best_dhr$fc$mean, series = "ARIMA+Fourier") +
   ylab("Daily Load")
 ```
-
 
 ## **Model 2**: Prophet Baseline (Score = 0.0973)
 ```{r Prophet, echo=TRUE, message=FALSE, warning=FALSE}
@@ -279,7 +278,7 @@ autoplot(train_ts %>% subset(start = length(train_ts)-100)) +
 
 
 ## **Model 4**: ARIMA + regressor + TBATS (score = 0.1018)
-```{r}
+```{r ARIMA + Weather + TBATS, message=FALSE, warning=FALSE}
 temp_full_ts <- msts(full$avg_temp, seasonal.periods = c(7, 365.25))
 rh_full_ts   <- msts(full$avg_rh,   seasonal.periods = c(7, 365.25))
 
@@ -320,15 +319,14 @@ final_xreg_future <- cbind(
 #plot
 autoplot(train_ts %>% subset(start = length(train_ts) - 100)) +
   autolayer(test_ts, series = "Testing Data") +
-  autolayer(as.numeric(best_ext$fc$mean), series = "ARIMA + Regressors", PI = FALSE) +
+  autolayer(best_ext$fc$mean, series = "ARIMA + Regressors", PI = FALSE) +
   ylab("Daily Load")
 ```
 
 
-
 ## **Model 5**: Prophet + Weather Regressors (Score = 0.1056)
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 prophet_load_weather_train <- train %>% 
   rename(ds = date, y = daily_load, temp = avg_temp, rh = avg_rh) 
 
@@ -372,7 +370,7 @@ autoplot(train_ts %>% subset(start = length(train_ts)-100)) +
 
 We trained our model on data over the period January 1, 2005--May 31, 2011. The model was then tested on its performance to predict load in June 2011. For our submissions for the competition, we trained the models on the entire dataset then projected load for the month of July 2011. 
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 # Get all accuracy scores
 arima_fourier_scores <- accuracy(as.numeric(best_dhr$fc$mean), as.numeric(test_ts))
 tbats_scores <- accuracy(tbats_forecast_train$mean, test_ts)
@@ -381,7 +379,7 @@ arima_regressor_tbats_scores <- accuracy(as.numeric(best_ext$fc$mean), as.numeri
 prophet_weather_scores <- accuracy(prophet_for_weather_ts_test, test_ts)
 ```
 
-```{r}
+```{r message=FALSE, warning=FALSE}
 # Combine scores in table 
 names <- colnames(tbats_scores)
 
