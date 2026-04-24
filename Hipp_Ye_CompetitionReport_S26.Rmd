@@ -254,7 +254,7 @@ prophet_for_ts <- msts(proph_load_forecast$yhat,
                    
 prophet_for_ts_test <- tail(prophet_for_ts,n_forecast)
 
-# Plot model + observed data
+# Plot model + observed data 
 autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
   autolayer(test_ts, series = "Testing Data") + 
   autolayer(prophet_for_ts_test, series="Prophet (Baseline)",PI=FALSE) +
