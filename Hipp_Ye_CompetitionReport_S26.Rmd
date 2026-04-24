@@ -3,7 +3,7 @@ title: "ENV 797 Forecasting Competition Report"
 subtitle: "Github Link: https://github.com/sylviahipp/HippYe_ENV797_TSA_ForecastCompetition_S26"
 author: "Sylvia Hipp and Janice Ye"
 date: "April 24, 2026"
-output: pdf_document
+output: html_document
 geometry: margin=2.54cm
 editor_options: 
   chunk_output_type: console
@@ -317,9 +317,9 @@ final_xreg_future <- cbind(
 )
 
 #plot
-autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
-  autolayer(test_ts, series = "Testing Data") + 
-  autolayer(as.numeric(final_xreg_future$fc$mean), series = "ARIMA+Regressors+TBATS",PI = FALSE) +
+autoplot(train_ts %>% subset(start = length(train_ts) - 100)) +
+  autolayer(test_ts, series = "Testing Data") +
+  autolayer(as.numeric(best_ext$fc$mean), series = "ARIMA + Regressors", PI = FALSE) +
   ylab("Daily Load")
 ```
 
