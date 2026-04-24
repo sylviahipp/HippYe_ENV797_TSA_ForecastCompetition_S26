@@ -29,6 +29,7 @@ library(knitr)
 library(kableExtra)
 ```
 
+
 # Import and Wrangle Data 
 
 ## Load Data
@@ -84,6 +85,7 @@ temp_df <- temperature_raw %>%
 ```
 
 ## Combine Datasets and convert to time series 
+
 ### Combine
 ```{r Convert Load to TS, message=FALSE, warning=FALSE}
 # Combine datasets
@@ -124,6 +126,7 @@ full <- comb %>%
 ```
 
 ### Convert to time series
+
 #### Load 
 ```{r Convert load to ts, message=FALSE, warning=FALSE}
 train_ts <- msts(train$daily_load, 
@@ -160,7 +163,6 @@ rh_ts_full <- msts(full$avg_rh,
 
 
 # Fit Time Series Models
-
 ```{r message=FALSE, warning=FALSE}
 # designate length of forecast
 n_forecast = length(test_ts)
@@ -261,7 +263,6 @@ autoplot(train_ts %>% subset(start = length(train_ts)-100)) +
 
 
 ## **Model 3**: TBATS (Score = 0.0998)
-
 ```{r TBATS, echo=TRUE, message=FALSE, warning=FALSE}
 # Fit TBATA model
 tbats_fit_train <- tbats(train_ts)
