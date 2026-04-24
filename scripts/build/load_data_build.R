@@ -25,7 +25,8 @@ load_df <- load_df_raw %>%
   mutate(date = as.Date(date)) %>% 
   pivot_longer(cols = c(h1:h24), 
                names_to = "hour", values_to = "load") %>% 
-  group_by(date) %>% 
+  group_by(date)
+
   # daily load = average across all 24 hours
   summarize(daily_load = mean(load, na.rm = TRUE)) %>%    # exclude NAs when calculating load
   ungroup()

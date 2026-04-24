@@ -159,7 +159,6 @@ rh_ts_full <- msts(full$avg_rh,
 ```
 
 
-
 # Fit Time Series Models
 
 ```{r message=FALSE, warning=FALSE}
@@ -173,7 +172,55 @@ temp_snaive_test <- snaive(temp_ts_train, h = n_forecast)
 rh_snaive_test <- snaive(rh_ts_train, h = n_forecast)
 ```
 
-## **Model 1**: [[Janice]]
+## **Model 1**: ARIMA + Fourier (Score = 0.096)
+```{r}
+# find the most applicable K
+best_dhr <- list(
+  rmse = Inf,
+  K_week = NA,
+  K_year = NA,
+  fit = NULL,
+  fc = NULL
+)
+
+# testing
+for (K_week in 1:2) {
+  for (K_year in 3:6) {
+    xreg_train <- fourier(train_ts, K = c(K_week, K_year))
+    xreg_test <- fourier(train_ts, K = c(K_week, K_year), h = 31)
+
+    fit_try <- auto.arima(
+      train_ts,
+      xreg = xreg_train,
+      seasonal = FALSE,          
+      stepwise = TRUE,
+      approximation = TRUE,
+      lambda = "auto",
+      biasadj = TRUE
+    )
+
+    fc_try <- forecast(fit_try, xreg = xreg_test, h = 31)
+
+    rmse_try <- accuracy(as.numeric(fc_try$mean), as.numeric(test$daily_load))["Test set", "RMSE"]
+
+    if (rmse_try < best_dhr$rmse) {
+      best_dhr$rmse <- rmse_try
+      best_dhr$K_week <- K_week
+      best_dhr$K_year <- K_year
+      best_dhr$fit <- fit_try
+      best_dhr$fc <- fc_try
+    }
+  }
+}
+
+# check best dhr
+best_dhr$K_week
+best_dhr$K_year
+best_dhr$rmse
+accuracy(as.numeric(best_dhr$fc$mean), as.numeric(test_ts))
+
+K <- c(best_dhr$K_week, best_dhr$K_year)
+```
 
 
 ## **Model 2**: Prophet Baseline (Score = 0.0973)
@@ -224,7 +271,46 @@ autoplot(train_ts %>% subset(start = length(train_ts)-100)) +
 ```
 
 
-## **Model 4**: [[Janice]]
+## **Model 4**: ARIMA + regressor + TBATS
+```{r}
+temp_full_ts <- msts(full$avg_temp, seasonal.periods = c(7, 365.25))
+rh_full_ts   <- msts(full$avg_rh,   seasonal.periods = c(7, 365.25))
+
+temp_fit_final <- tbats(temp_full_ts)
+temp_forecast_final <- forecast(temp_fit_final, h = 31)
+
+rh_fit_final <- tbats(rh_full_ts)
+rh_forecast_final <- forecast(rh_fit_final, h = 31)
+
+weather_full <- scale(full %>% select(avg_temp, avg_rh))
+weather_full <- as.matrix(weather_full)
+
+future_weather_raw <- data.frame(
+  avg_temp = as.numeric(temp_forecast_final$mean),
+  avg_rh   = as.numeric(rh_forecast_final$mean)
+)
+
+future_weather_31 <- scale(
+  future_weather_raw,
+  center = attr(weather_full, "scaled:center"),
+  scale  = attr(weather_full, "scaled:scale")
+)
+
+future_weather_31 <- as.matrix(future_weather_31)
+
+best_K_ext <- c(best_ext$K_week, best_ext$K_year)
+
+final_xreg_train <- cbind(
+  fourier(full_ts, K = best_K_ext),
+  weather_full
+)
+
+final_xreg_future <- cbind(
+  fourier(full_ts, K = best_K_ext, h = 31),
+  future_weather_31
+)
+```
+
 
 
 ## **Model 5**: Prophet + Weather Regressors (Score = 0.1056)
@@ -275,8 +361,10 @@ We trained our model on data over the period January 1, 2005--May 31, 2011. The 
 
 ```{r}
 # Get all accuracy scores
+arima_fourier_scores <- accuracy(as.numeric(best_dhr$fc$mean), as.numeric(test_ts))
 tbats_scores <- accuracy(tbats_forecast_train$mean, test_ts)
 prophet_scores <- accuracy(prophet_for_ts_test, test_ts)
+arima_regressor_tbats_scores <- accuracy(as.numeric(best_ext$fc$mean), as.numeric(test_ts))
 prophet_weather_scores <- accuracy(prophet_for_weather_ts_test, test_ts)
 ```
 
@@ -285,12 +373,14 @@ prophet_weather_scores <- accuracy(prophet_for_weather_ts_test, test_ts)
 names <- colnames(tbats_scores)
 
 scores <- rbind(
+  arima_fourier_scores,
   prophet_scores,
   prophet_weather_scores,
+  arima_regressor_tbats_scores,
   tbats_scores
 ) %>% as.data.frame()
 
-rownames(scores) <- c("Prophet (baseline)", "Prophet (+Weather Regressors)", "TBATS")
+rownames(scores) <- c("Arima + Fourier", "Prophet (baseline)", "Prophet (+Weather Regressors)", "Arima + Regressors + TBATS", "TBATS")
 
 # Display table with scores
 scores %>% 
@@ -298,6 +388,5 @@ scores %>%
   row_spec(0, align = "c", bold = TRUE) %>% 
   column_spec(1, bold = TRUE) %>% 
   kable_classic() 
-
 ```
 

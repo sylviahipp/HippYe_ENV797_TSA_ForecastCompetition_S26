@@ -240,7 +240,7 @@ final_fc <- forecast(
   final_fit,
   xreg = final_xreg_future,
   h = 31
-)
+) 
 ```
 
 # Export
