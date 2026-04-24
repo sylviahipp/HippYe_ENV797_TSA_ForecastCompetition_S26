@@ -3,7 +3,7 @@ title: "ENV 797 Forecasting Competition Report"
 subtitle: "Github Link: https://github.com/sylviahipp/HippYe_ENV797_TSA_ForecastCompetition_S26"
 author: "Sylvia Hipp and Janice Ye"
 date: "April 24, 2026"
-output: html_document
+output: pdf_document
 geometry: margin=2.54cm
 editor_options: 
   chunk_output_type: console
@@ -163,6 +163,8 @@ rh_ts_full <- msts(full$avg_rh,
 
 
 # Fit Time Series Models
+
+### Setup
 ```{r message=FALSE, warning=FALSE}
 # designate length of forecast
 n_forecast = length(test_ts)
@@ -174,7 +176,7 @@ temp_snaive_test <- snaive(temp_ts_train, h = n_forecast)
 rh_snaive_test <- snaive(rh_ts_train, h = n_forecast)
 ```
 
-## **Model 1**: ARIMA + Fourier (Score = 0.096)
+## **Model 1**: ARIMA + Fourier (Score = 0.0960)
 ```{r Arima + Fourier, message=FALSE, warning=FALSE}
 # find the most applicable K
 best_dhr <- list(
@@ -277,74 +279,47 @@ autoplot(train_ts %>% subset(start = length(train_ts)-100)) +
 ```
 
 
-## **Model 4**: ARIMA + regressor + TBATS (score = 0.1018)
-```{r ARIMA + Weather + TBATS, message=FALSE, warning=FALSE}
-temp_full_ts <- msts(full$avg_temp, seasonal.periods = c(7, 365.25))
-rh_full_ts   <- msts(full$avg_rh,   seasonal.periods = c(7, 365.25))
+## **Model 4**: ARIMA + Fourier + Weather (Snaive Forecast) (score = 0.1018)
+```{r ARIMA + Fourier + Weather, message=FALSE, warning=FALSE}
+xreg_rh_temp_train <- cbind(fourier(train_ts, K=c(2,12)), 
+                            rh = rh_ts_train, 
+                            temp = temp_ts_train)
+xreg_rh_temp_forecast <- cbind(fourier(train_ts, K=c(2,12), h=n_forecast), 
+                               rh = rh_snaive_test$mean, 
+                               temp = temp_snaive_test$mean)
 
-temp_fit_final <- tbats(temp_full_ts)
-temp_forecast_final <- forecast(temp_fit_final, h = 31)
+# FORCE matching column names and order
+colnames(xreg_rh_temp_forecast) <- colnames(xreg_rh_temp_train)
+xreg_rh_temp_forecast <- xreg_rh_temp_forecast[, colnames(xreg_rh_temp_train)]
 
-rh_fit_final <- tbats(rh_full_ts)
-rh_forecast_final <- forecast(rh_fit_final, h = 31)
+# Convert to matrix
+xreg_rh_temp_train <- as.matrix(xreg_rh_temp_train)
+xreg_rh_temp_forecast <- as.matrix(xreg_rh_temp_forecast)
 
-weather_full <- scale(full %>% select(avg_temp, avg_rh))
-weather_full <- as.matrix(weather_full)
+arima_rh_temp_train <- auto.arima(train_ts, 
+                                  seasonal = FALSE, 
+                                  lambda = NULL,
+                                  xreg = xreg_rh_temp_train) 
 
-future_weather_raw <- data.frame(
-  avg_temp = as.numeric(temp_forecast_final$mean),
-  avg_rh   = as.numeric(rh_forecast_final$mean)
-)
+arima_rh_temp_forecast <- forecast(arima_rh_temp_train,
+                                   xreg = xreg_rh_temp_forecast, 
+                                   h = n_forecast)
 
-future_weather_31 <- scale(
-  future_weather_raw,
-  center = attr(weather_full, "scaled:center"),
-  scale  = attr(weather_full, "scaled:scale")
-)
+# summary(arima_four_model_train)
+#checkresiduals(arima_rh_temp_train)   # appears near white noise series
 
-future_weather_31 <- as.matrix(future_weather_31)
-
-best_K_ext <- c(best_ext$K_week, best_ext$K_year)
-
-final_xreg_train <- cbind(
-  fourier(full_ts, K = best_K_ext),
-  weather_full
-)
-
-final_xreg_future <- cbind(
-  fourier(full_ts, K = best_K_ext, h = 31),
-  future_weather_31
-)
-
-test_fit <- auto.arima(
-  train_ts,
-  xreg = test_xreg_train,
-  seasonal = FALSE
-)
-
-test_forecast <- forecast(
-  test_fit,
-  xreg = test_xreg_future,
-  h = length(test_ts)
-)
-
-#plot
-autoplot(window(train_ts, start = length(train_ts) - 100)) +
-  autolayer(test_ts, series = "Testing Data") +
-<<<<<<< HEAD
-  autolayer(best_ext$fc$mean, series = "ARIMA + Regressors", PI = FALSE) +
+# Plot model + observed data
+autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
+  autolayer(test_ts, series = "Testing Data") + 
+  autolayer(arima_rh_temp_forecast$mean, series="ARIMA + Fourier + Weather (SNaive)") +
   ylab("Daily Load")
-=======
-  autolayer(test_forecast$mean, series = "ARIMA + Regressors", PI = FALSE) +
-  ylab("Daily Load") +
-  xlab("Time")
->>>>>>> a9dca1bcc00aa62e8e3b288c5595d35e0e7421bb
+
 ```
 
 
-## **Model 5**: Prophet + Weather Regressors (Score = 0.1056)
+## **Model 5**: Prophet + Weather (Snaive Forecast) (Score = 0.1056)
 
-```{r message=FALSE, warning=FALSE}
+```{r Prophet + Weather, message=FALSE, warning=FALSE}
 prophet_load_weather_train <- train %>% 
   rename(ds = date, y = daily_load, temp = avg_temp, rh = avg_rh) 
 
@@ -390,10 +365,10 @@ We trained our model on data over the period January 1, 2005--May 31, 2011. The 
 
 ```{r message=FALSE, warning=FALSE}
 # Get all accuracy scores
-arima_fourier_scores <- accuracy(as.numeric(best_dhr$fc$mean), as.numeric(test_ts))
+arima_fourier_scores <- accuracy(best_dhr$fc$mean, test_ts)
 tbats_scores <- accuracy(tbats_forecast_train$mean, test_ts)
 prophet_scores <- accuracy(prophet_for_ts_test, test_ts)
-arima_regressor_tbats_scores <- accuracy(as.numeric(best_ext$fc$mean), as.numeric(test_ts))
+arima_regressor_scores <- accuracy(arima_rh_temp_forecast$mean, test_ts)
 prophet_weather_scores <- accuracy(prophet_for_weather_ts_test, test_ts)
 ```
 
@@ -405,7 +380,7 @@ scores <- rbind(
   arima_fourier_scores,
   prophet_scores,
   prophet_weather_scores,
-  arima_regressor_tbats_scores,
+  arima_regressor_scores,
   tbats_scores
 ) %>% as.data.frame()
 
@@ -414,8 +389,9 @@ rownames(scores) <- c("Arima + Fourier", "Prophet (baseline)", "Prophet (+Weathe
 # Display table with scores
 scores %>% 
   kable() %>% 
-  row_spec(0, align = "c", bold = TRUE) %>% 
-  column_spec(1, bold = TRUE) %>% 
-  kable_classic() 
+  #row_spec(0, align = "c", bold = TRUE) %>% 
+  #column_spec(1, bold = TRUE) %>% 
+  kable_classic() %>% 
+  kable_styling(latex_options = "scale_down")
 ```
 
