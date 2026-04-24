@@ -316,11 +316,29 @@ final_xreg_future <- cbind(
   future_weather_31
 )
 
+test_fit <- auto.arima(
+  train_ts,
+  xreg = test_xreg_train,
+  seasonal = FALSE
+)
+
+test_forecast <- forecast(
+  test_fit,
+  xreg = test_xreg_future,
+  h = length(test_ts)
+)
+
 #plot
-autoplot(train_ts %>% subset(start = length(train_ts) - 100)) +
+autoplot(window(train_ts, start = length(train_ts) - 100)) +
   autolayer(test_ts, series = "Testing Data") +
+<<<<<<< HEAD
   autolayer(best_ext$fc$mean, series = "ARIMA + Regressors", PI = FALSE) +
   ylab("Daily Load")
+=======
+  autolayer(test_forecast$mean, series = "ARIMA + Regressors", PI = FALSE) +
+  ylab("Daily Load") +
+  xlab("Time")
+>>>>>>> a9dca1bcc00aa62e8e3b288c5595d35e0e7421bb
 ```
 
 
