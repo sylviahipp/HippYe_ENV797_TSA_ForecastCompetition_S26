@@ -271,7 +271,7 @@ autoplot(train_ts %>% subset(start = length(train_ts)-100)) +
 ```
 
 
-## **Model 4**: ARIMA + regressor + TBATS
+## **Model 4**: ARIMA + regressor + TBATS (score = 0.1018)
 ```{r}
 temp_full_ts <- msts(full$avg_temp, seasonal.periods = c(7, 365.25))
 rh_full_ts   <- msts(full$avg_rh,   seasonal.periods = c(7, 365.25))
@@ -334,7 +334,7 @@ proph_future_regressors <- make_future_dataframe(prophet_fit_regressors,
 
 # add regressors to future data frame
 proph_future_regressors$temp <- c(temp_ts_train, temp_snaive_test$mean)
-proph_future_regressors$rh <- c(rh_ts_train, rh_snaive_test$mean)
+proph_future_regressors$rh <- c(rh_ts_train, rh_snaive_test$mean) 
 
 # Predict 
 proph_load_weather_forecast <- predict(prophet_fit_regressors,proph_future_regressors)
