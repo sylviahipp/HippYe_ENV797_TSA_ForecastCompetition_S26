@@ -220,6 +220,12 @@ best_dhr$rmse
 accuracy(as.numeric(best_dhr$fc$mean), as.numeric(test_ts))
 
 K <- c(best_dhr$K_week, best_dhr$K_year)
+
+# plot
+autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
+  autolayer(test_ts, series = "Testing Data") + 
+  autolayer(as.numeric(best_dhr$fc$mean), series = "ARIMA+Fourier",PI = FALSE) +
+  ylab("Daily Load")
 ```
 
 
@@ -309,6 +315,12 @@ final_xreg_future <- cbind(
   fourier(full_ts, K = best_K_ext, h = 31),
   future_weather_31
 )
+
+#plot
+autoplot(train_ts %>% subset(start = length(train_ts)-100)) + 
+  autolayer(test_ts, series = "Testing Data") + 
+  autolayer(as.numeric(final_xreg_future$fc$mean), series = "ARIMA+Regressors+TBATS",PI = FALSE) +
+  ylab("Daily Load")
 ```
 
 
