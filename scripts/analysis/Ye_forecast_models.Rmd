@@ -116,72 +116,44 @@ K <- c(best_dhr$K_week, best_dhr$K_year)
 ```
 
 ## model 2: arima fourier + regressor 
+
 ```{r}
-# scale weather variables using TRAIN stats only
-weather_train <- scale(train %>% select(avg_temp, avg_rh))
+temp_full_ts <- msts(full$avg_temp, seasonal.periods = c(7, 365.25))
+rh_full_ts   <- msts(full$avg_rh,   seasonal.periods = c(7, 365.25))
 
-weather_test <- scale(
-  test %>% select(avg_temp, avg_rh),
-  center = attr(weather_train, "scaled:center"),
-  scale  = attr(weather_train, "scaled:scale")
+temp_fit_final <- tbats(temp_full_ts)
+temp_forecast_final <- forecast(temp_fit_final, h = 31)
+
+rh_fit_final <- tbats(rh_full_ts)
+rh_forecast_final <- forecast(rh_fit_final, h = 31)
+
+weather_full <- scale(full %>% select(avg_temp, avg_rh))
+weather_full <- as.matrix(weather_full)
+
+future_weather_raw <- data.frame(
+  avg_temp = as.numeric(temp_forecast_final$mean),
+  avg_rh   = as.numeric(rh_forecast_final$mean)
 )
 
-best_ext <- list(
-  rmse = Inf,
-  K_week = NA,
-  K_year = NA,
-  fit = NULL,
-  fc = NULL
+future_weather_31 <- scale(
+  future_weather_raw,
+  center = attr(weather_full, "scaled:center"),
+  scale  = attr(weather_full, "scaled:scale")
 )
 
-for (K_week in 1:2) {
-  for (K_year in 4:5) {
-    
-    cat("Running K =", K_week, K_year, "\n")
-    
-    fourier_train <- fourier(train_ts, K = c(K_week, K_year))
-    fourier_test  <- fourier(train_ts, K = c(K_week, K_year), h = nrow(test))
-    
-    xreg_train <- cbind(fourier_train, weather_train)
-    xreg_test  <- cbind(fourier_test, weather_test)
-    
-    fit_try <- auto.arima(
-      train_ts,
-      xreg = xreg_train,
-      seasonal = FALSE,
-      stepwise = TRUE,
-      approximation = TRUE,
-      lambda = "auto",
-      biasadj = TRUE
-    )
-    
-    fc_try <- forecast(
-      fit_try,
-      xreg = xreg_test,
-      h = nrow(test)
-    )
-    
-    rmse_try <- accuracy(
-      as.numeric(fc_try$mean),
-      as.numeric(test_ts)
-    )["Test set", "RMSE"]
-    
-    cat("RMSE =", rmse_try, "\n")
-    
-    if (rmse_try < best_ext$rmse) {
-      best_ext$rmse <- rmse_try
-      best_ext$K_week <- K_week
-      best_ext$K_year <- K_year
-      best_ext$fit <- fit_try
-      best_ext$fc <- fc_try
-    }
-  }
-}
+future_weather_31 <- as.matrix(future_weather_31)
 
-best_ext$K_week
-best_ext$K_year
-best_ext$rmse
-accuracy(as.numeric(best_ext$fc$mean), as.numeric(test_ts))
+best_K_ext <- c(best_ext$K_week, best_ext$K_year)
+
+final_xreg_train <- cbind(
+  fourier(full_ts, K = best_K_ext),
+  weather_full
+)
+
+final_xreg_future <- cbind(
+  fourier(full_ts, K = best_K_ext, h = 31),
+  future_weather_31
+)
 ```
 
 ## model 3: tbats
@@ -255,28 +227,20 @@ ens_results[order(ens_results$RMSE), ]
 
 # Fit model
 ```{r}
-final_xreg_train <- fourier(
-    full_ts,
-    K = c(best_dhr$K_week, best_dhr$K_year)
-  )
-
-  final_xreg_future <- fourier(
-    full_ts,
-    K = c(best_dhr$K_week, best_dhr$K_year),
-    h = 31
-  )
-
+#fit
 final_fit <- auto.arima(
-    full_ts,
-    xreg = final_xreg_train,
-    seasonal = FALSE,
-    stepwise = FALSE,
-    approximation = FALSE,
-    lambda = "auto",
-    biasadj = TRUE
-  )
+  full_ts,
+  xreg = final_xreg_train,
+  seasonal = FALSE,
+  stepwise = FALSE,
+  approximation = FALSE
+)
 
-final_fc <- forecast(final_fit, xreg = final_xreg_future, h = 31)
+final_fc <- forecast(
+  final_fit,
+  xreg = final_xreg_future,
+  h = 31
+)
 ```
 
 # Export
@@ -284,12 +248,12 @@ final_fc <- forecast(final_fit, xreg = final_xreg_future, h = 31)
 submission_template <- read_csv(here("data/raw/submission_template.csv"))
 n_submission <- nrow(submission_template)
 
-arima_four_submit <- submission_template
-arima_four_submit$load <- as.numeric(final_fc$mean)
+arima_reg_submit <- submission_template
+arima_reg_submit$load <- as.numeric(final_fc$mean)
 
 write.csv(
-  arima_four_submit,
-  "./data/submissions/arima_fourier_model.csv",
+  arima_reg_submit,
+  "./data/submissions/arima_rh_temp_tbats_model.csv",
   row.names = FALSE
 )
 ```
